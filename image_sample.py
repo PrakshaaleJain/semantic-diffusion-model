@@ -25,7 +25,10 @@ def main():
     args = create_argparser().parse_args()
 
     dist_util.setup_dist()
-    logger.configure()
+    logger.configure(dir="OUTPUT/FACADES-SDM-4060", format_strs=["stdout", "log", "csv"])
+    logger.log("Logger initialized")
+    logger.logkv("test_key", "test_value")
+    logger.dumpkvs()
 
     logger.log("creating model and diffusion...")
     model, diffusion = create_model_and_diffusion(
@@ -55,6 +58,7 @@ def main():
 
     image_path = os.path.join(args.results_path, 'images')
     os.makedirs(image_path, exist_ok=True)
+    logger.log(f"Results directory created: {image_path}")
     label_path = os.path.join(args.results_path, 'labels')
     os.makedirs(label_path, exist_ok=True)
     sample_path = os.path.join(args.results_path, 'samples')

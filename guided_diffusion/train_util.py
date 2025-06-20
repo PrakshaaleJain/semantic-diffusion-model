@@ -12,6 +12,7 @@ from . import dist_util, logger
 from .fp16_util import MixedPrecisionTrainer
 from .nn import update_ema
 from .resample import LossAwareSampler, UniformSampler
+# from .logger import logger
 
 # For ImageNet experiments, this was a good default value.
 # We found that the lg_loss_scale quickly climbed to
@@ -26,12 +27,12 @@ class TrainLoop:
         model,
         diffusion,
         data,
-        num_classes,
         batch_size,
         microbatch,
+        num_classes,
+        drop_rate,
         lr,
         ema_rate,
-        drop_rate,
         log_interval,
         save_interval,
         resume_checkpoint,
@@ -62,6 +63,8 @@ class TrainLoop:
         self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
         self.weight_decay = weight_decay
         self.lr_anneal_steps = lr_anneal_steps
+        self.num_classes = num_classes   # Number of semantic classes
+        self.drop_rate = drop_rate  
 
         self.step = 0
         self.resume_step = 0
@@ -156,7 +159,9 @@ class TrainLoop:
 
             if self.opt.param_groups[0]['lr'] != self.lr:
                 self.opt.param_groups[0]['lr'] = self.lr
-
+        else:
+            logger.warn(f"Optimizer checkpoint not found: {opt_checkpoint}")
+    
     def run_loop(self):
         while (
             not self.lr_anneal_steps
@@ -263,38 +268,31 @@ class TrainLoop:
         dist.barrier()
 
     def preprocess_input(self, data):
-        # move to GPU and change data types
         data['label'] = data['label'].long()
-
+        
         # create one-hot label map
         label_map = data['label']
         bs, _, h, w = label_map.size()
         nc = self.num_classes
+        
+        # Check for invalid labels before creating one-hot encoding
+        max_valid_label = nc - 1
+        invalid_mask = label_map > max_valid_label
+        
+        if invalid_mask.any():
+            # Log warning about invalid labels
+            unique_invalid = th.unique(label_map[invalid_mask])
+            print(f"Invalid labels detected: {unique_invalid.tolist()}")
+            label_map[invalid_mask] = 0  # Replace invalid labels with 0
+
         input_label = th.FloatTensor(bs, nc, h, w).zero_()
         input_semantics = input_label.scatter_(1, label_map, 1.0)
+        logger.log(f"Preprocessed input: {input_semantics.shape}")
 
-        # concatenate instance map if it exists
-        if 'instance' in data:
-            inst_map = data['instance']
-            instance_edge_map = self.get_edges(inst_map)
-            input_semantics = th.cat((input_semantics, instance_edge_map), dim=1)
 
-        if self.drop_rate > 0.0:
-            mask = (th.rand([input_semantics.shape[0], 1, 1, 1]) > self.drop_rate).float()
-            input_semantics = input_semantics * mask
+        return {'y': input_semantics}
+        
 
-        cond = {key: value for key, value in data.items() if key not in ['label', 'instance', 'path', 'label_ori']}
-        cond['y'] = input_semantics
-
-        return cond
-
-    def get_edges(self, t):
-        edge = th.ByteTensor(t.size()).zero_()
-        edge[:, :, :, 1:] = edge[:, :, :, 1:] | (t[:, :, :, 1:] != t[:, :, :, :-1])
-        edge[:, :, :, :-1] = edge[:, :, :, :-1] | (t[:, :, :, 1:] != t[:, :, :, :-1])
-        edge[:, :, 1:, :] = edge[:, :, 1:, :] | (t[:, :, 1:, :] != t[:, :, :-1, :])
-        edge[:, :, :-1, :] = edge[:, :, :-1, :] | (t[:, :, 1:, :] != t[:, :, :-1, :])
-        return edge.float()
 
 
 def parse_resume_step_from_filename(filename):
