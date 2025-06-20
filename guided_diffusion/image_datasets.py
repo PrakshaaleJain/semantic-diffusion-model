@@ -59,8 +59,8 @@ def load_data(
         classes = _list_image_files_recursively(os.path.join(data_dir, 'train' if is_train else 'test', 'labels'))
         instances = _list_image_files_recursively(os.path.join(data_dir, 'train' if is_train else 'test', 'labels'))
     elif dataset_mode == 'facades':
-        all_files = _list_image_files_recursively(os.path.join(data_dir, 'images'))
-        classes = _list_image_files_recursively(os.path.join(data_dir, 'labels'))
+        all_files = _list_image_files_recursively(os.path.join(data_dir, 'images', 'training' if is_train else 'validation'))
+        classes = _list_image_files_recursively(os.path.join(data_dir, 'annotations', 'training' if is_train else 'validation'))
         instances = None
     else:
         raise NotImplementedError('{} not implemented'.format(dataset_mode))
